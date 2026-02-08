@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG Query Flow Diagram</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            background: #1a1a2e;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            color: #e94560;
+            margin-bottom: 8px;
+            font-size: 1.8rem;
+        }
+        h2 {
+            color: #7b8794;
+            font-weight: 400;
+            font-size: 1rem;
+            margin-top: 0;
+            margin-bottom: 30px;
+        }
+        .diagram-container {
+            background: #16213e;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 1100px;
+            width: 100%;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            border: 1px solid #1a3a5c;
+            overflow-x: auto;
+        }
+        .legend {
+            margin-top: 30px;
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+            justify-content: center;
+            font-size: 0.85rem;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .legend-color {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <h1>RAG Chatbot &mdash; Query Flow</h1>
+    <h2>Sequence diagram: from user click to rendered answer</h2>
+
+    <div class="diagram-container">
+        <pre class="mermaid">
+sequenceDiagram
+    autonumber
+
+    actor User
+    participant FE as Frontend<br/>script.js
+    participant API as FastAPI<br/>app.py
+    participant RAG as RAGSystem<br/>rag_system.py
+    participant SM as SessionManager<br/>session_manager.py
+    participant AI as AIGenerator<br/>ai_generator.py
+    participant Claude as Claude API<br/>(Anthropic)
+    participant TM as ToolManager<br/>search_tools.py
+    participant CST as CourseSearchTool<br/>search_tools.py
+    participant VS as VectorStore<br/>vector_store.py
+    participant DB as ChromaDB
+
+    User->>FE: Types question & clicks Send
+    activate FE
+    FE->>FE: addMessage(query, 'user')
+    FE->>FE: Show loading animation
+
+    FE->>+API: POST /api/query<br/>{query, session_id: null}
+    deactivate FE
+
+    Note over API: session_id is null → create new session
+    API->>+SM: create_session()
+    SM-->>-API: "session_1"
+
+    API->>+RAG: query(query, "session_1")
+
+    RAG->>RAG: Wrap prompt:<br/>"Answer this question about<br/>course materials: {query}"
+
+    RAG->>+SM: get_conversation_history("session_1")
+    SM-->>-RAG: None (first message)
+
+    RAG->>+AI: generate_response(prompt, history,<br/>tool_definitions, tool_manager)
+
+    Note over AI: Build system prompt +<br/>conversation history (if any)
+
+    AI->>+Claude: messages.create()<br/>model, system, messages, tools
+    Claude-->>-AI: Response with stop_reason
+
+    alt stop_reason == "end_turn"
+        Note over AI: Claude answered directly<br/>without searching
+        AI-->>RAG: response text
+    else stop_reason == "tool_use"
+        Note over AI,Claude: Claude wants to search<br/>course content
+
+        rect rgb(30, 60, 90)
+            Note over AI,DB: Tool Execution Phase
+
+            loop For each tool_use block
+                AI->>+TM: execute_tool("search_course_content",<br/>query, course_name?, lesson_number?)
+                TM->>+CST: execute(query, course_name, lesson_number)
+
+                CST->>+VS: search(query, course_name, lesson_number)
+
+                opt course_name provided
+                    VS->>+DB: query course_catalog<br/>(fuzzy name match)
+                    DB-->>-VS: resolved course_title
+                end
+
+                VS->>VS: _build_filter(course_title, lesson_number)
+
+                VS->>+DB: query course_content<br/>(semantic search, n=5)
+                Note over DB: Embed query with<br/>all-MiniLM-L6-v2<br/>→ cosine similarity
+                DB-->>-VS: top 5 matching chunks<br/>+ metadata + distances
+
+                VS-->>-CST: SearchResults
+
+                CST->>CST: _format_results()<br/>Store sources in last_sources
+
+                CST-->>-TM: formatted result string
+                TM-->>-AI: tool_result
+            end
+
+            AI->>+Claude: 2nd API call<br/>(messages + tool results,<br/>NO tools this time)
+            Note over Claude: Claude synthesizes<br/>final answer from<br/>search results
+            Claude-->>-AI: final response text
+        end
+
+        AI-->>-RAG: response text
+    end
+
+    RAG->>+TM: get_last_sources()
+    TM-->>-RAG: ["Course X - Lesson Y", ...]
+
+    RAG->>TM: reset_sources()
+
+    RAG->>+SM: add_exchange("session_1",<br/>user_query, ai_response)
+    SM-->>-RAG: (saved)
+
+    RAG-->>-API: (response, sources)
+
+    API-->>-FE: JSON response:<br/>{answer, sources, session_id}
+
+    activate FE
+    FE->>FE: Remove loading animation
+    FE->>FE: marked.parse(answer) → HTML
+    FE->>FE: addMessage(answer, 'assistant', sources)
+    FE->>FE: Render collapsible sources panel
+    FE-->>User: Display formatted answer
+    deactivate FE
+        </pre>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item">
+            <div class="legend-color" style="background: #e94560;"></div>
+            <span>Frontend (Browser)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #0f3460;"></div>
+            <span>Backend (Python)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #533483;"></div>
+            <span>External Services (Claude API, ChromaDB)</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: rgb(30, 60, 90);"></div>
+            <span>Tool Execution Phase (conditional)</span>
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'dark',
+            sequence: {
+                actorMargin: 30,
+                messageFontSize: 13,
+                noteFontSize: 12,
+                wrap: true,
+                width: 180,
+                useMaxWidth: false
+            },
+            themeVariables: {
+                primaryColor: '#1a3a5c',
+                primaryTextColor: '#e0e0e0',
+                primaryBorderColor: '#e94560',
+                lineColor: '#7b8794',
+                secondaryColor: '#16213e',
+                tertiaryColor: '#0f3460',
+                noteBkgColor: '#1a3a5c',
+                noteTextColor: '#e0e0e0',
+                noteBorderColor: '#e94560',
+                actorBkg: '#0f3460',
+                actorBorder: '#e94560',
+                actorTextColor: '#e0e0e0',
+                signalColor: '#e0e0e0',
+                labelBoxBkgColor: '#16213e',
+                labelBoxBorderColor: '#e94560',
+                labelTextColor: '#e0e0e0',
+                loopTextColor: '#e0e0e0',
+                activationBkgColor: '#1a3a5c',
+                activationBorderColor: '#e94560',
+                sequenceNumberColor: '#1a1a2e'
+            }
+        });
+    </script>
+</body>
+</html>

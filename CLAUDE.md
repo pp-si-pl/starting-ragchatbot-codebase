@@ -58,7 +58,7 @@ Course material `.txt` files loaded automatically on server startup via `app.py`
 
 ## Rules
 
-- Always use `uv` instead of `pip` for package management (install, add, remove dependencies).
+- Always use `uv` instead of `pip` for package management (install, add, remove dependencies). 
 
 ## Key Patterns
 
