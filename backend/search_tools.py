@@ -101,15 +101,17 @@ class CourseSearchTool(Tool):
             header += "]"
             
             # Track source for the UI
-            source = course_title
+            source_name = course_title
+            url = None
             if lesson_num is not None:
-                source += f" - Lesson {lesson_num}"
-            sources.append(source)
+                source_name += f" - Lesson {lesson_num}"
+                url = self.store.get_lesson_link(course_title, lesson_num)
+            sources.append({"name": source_name, "url": url})
             
             formatted.append(f"{header}\n{doc}")
         
-        # Store sources for retrieval
-        self.last_sources = sources
+        # Accumulate sources across multiple searches (reset happens per-query in rag_system)
+        self.last_sources.extend(sources)
         
         return "\n\n".join(formatted)
 

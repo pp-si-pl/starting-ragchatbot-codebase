@@ -107,6 +107,27 @@ header h1 {
     margin-bottom: 1.5rem;
 }
 
+/* New Chat Button */
+.new-chat-button {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #ffffff;
+    background: #dc2626;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    padding: 0.625rem 1rem;
+    width: 100%;
+    text-align: left;
+    transition: background 0.2s ease;
+}
+
+.new-chat-button:hover {
+    color: var(--primary-color);
+}
+
 .sidebar-section:last-child {
     margin-bottom: 0;
 }
@@ -241,8 +262,30 @@ header h1 {
 }
 
 .sources-content {
-    padding: 0 0.5rem 0.25rem 1.5rem;
-    color: var(--text-secondary);
+    padding: 0.25rem 0.5rem 0.25rem 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.source-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.65rem;
+    background: rgba(37, 99, 235, 0.1);
+    border: 1px solid rgba(37, 99, 235, 0.25);
+    border-radius: 999px;
+    color: var(--primary-color);
+    font-size: 0.75rem;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+a.source-chip:hover {
+    background: rgba(37, 99, 235, 0.2);
+    border-color: var(--primary-color);
+    color: #93bbff;
 }
 
 /* Markdown formatting styles */

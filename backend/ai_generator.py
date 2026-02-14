@@ -1,6 +1,8 @@
 import anthropic
 from typing import List, Optional, Dict, Any
 
+MAX_TOOL_ROUNDS = 2
+
 class AIGenerator:
     """Handles interactions with Anthropic's Claude API for generating responses"""
     
@@ -9,7 +11,7 @@ class AIGenerator:
 
 Search Tool Usage:
 - Use the search tool **only** for questions about specific course content or detailed educational materials
-- **One search per query maximum**
+- **Up to two searches per query** — use a second search when the first result informs what to search next (e.g., comparisons, multi-part questions)
 - Synthesize search results into accurate, fact-based responses
 - If search yields no results, state this clearly without offering alternatives
 
@@ -46,90 +48,75 @@ Provide only the direct answer to what was asked.
                          tool_manager=None) -> str:
         """
         Generate AI response with optional tool usage and conversation context.
-        
-        Args:
-            query: The user's question or request
-            conversation_history: Previous messages for context
-            tools: Available tools the AI can use
-            tool_manager: Manager to execute tools
-            
-        Returns:
-            Generated response as string
+        Supports up to MAX_TOOL_ROUNDS sequential tool call rounds.
         """
-        
-        # Build system content efficiently - avoid string ops when possible
+
+        # Build system content
         system_content = (
             f"{self.SYSTEM_PROMPT}\n\nPrevious conversation:\n{conversation_history}"
-            if conversation_history 
+            if conversation_history
             else self.SYSTEM_PROMPT
         )
-        
-        # Prepare API call parameters efficiently
+
+        messages = [{"role": "user", "content": query}]
+
+        # Prepare initial API call
         api_params = {
             **self.base_params,
-            "messages": [{"role": "user", "content": query}],
+            "messages": messages,
             "system": system_content
         }
-        
-        # Add tools if available
         if tools:
             api_params["tools"] = tools
             api_params["tool_choice"] = {"type": "auto"}
-        
-        # Get response from Claude
+
         response = self.client.messages.create(**api_params)
-        
-        # Handle tool execution if needed
-        if response.stop_reason == "tool_use" and tool_manager:
-            return self._handle_tool_execution(response, api_params, tool_manager)
-        
-        # Return direct response
-        return response.content[0].text
-    
-    def _handle_tool_execution(self, initial_response, base_params: Dict[str, Any], tool_manager):
-        """
-        Handle execution of tool calls and get follow-up response.
-        
-        Args:
-            initial_response: The response containing tool use requests
-            base_params: Base API parameters
-            tool_manager: Manager to execute tools
-            
-        Returns:
-            Final response text after tool execution
-        """
-        # Start with existing messages
-        messages = base_params["messages"].copy()
-        
-        # Add AI's tool use response
-        messages.append({"role": "assistant", "content": initial_response.content})
-        
-        # Execute all tool calls and collect results
-        tool_results = []
-        for content_block in initial_response.content:
-            if content_block.type == "tool_use":
-                tool_result = tool_manager.execute_tool(
-                    content_block.name, 
-                    **content_block.input
-                )
-                
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": content_block.id,
-                    "content": tool_result
-                })
-        
-        # Add tool results as single message
-        if tool_results:
+
+        # Tool-use loop
+        round_count = 0
+        while response.stop_reason == "tool_use" and tool_manager and round_count < MAX_TOOL_ROUNDS:
+            round_count += 1
+
+            # Append assistant's tool-use response
+            messages.append({"role": "assistant", "content": response.content})
+
+            # Execute each tool call
+            tool_results = []
+            for block in response.content:
+                if block.type == "tool_use":
+                    try:
+                        result = tool_manager.execute_tool(block.name, **block.input)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": result
+                        })
+                    except Exception as e:
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": f"Tool execution failed: {e}",
+                            "is_error": True
+                        })
+
             messages.append({"role": "user", "content": tool_results})
-        
-        # Prepare final API call without tools
-        final_params = {
-            **self.base_params,
-            "messages": messages,
-            "system": base_params["system"]
-        }
-        
-        # Get final response
-        final_response = self.client.messages.create(**final_params)
-        return final_response.content[0].text
+
+            # Build next API call
+            next_params = {
+                **self.base_params,
+                "messages": messages,
+                "system": system_content
+            }
+            # Include tools for intermediate rounds, omit on final round
+            if round_count < MAX_TOOL_ROUNDS and tools:
+                next_params["tools"] = tools
+                next_params["tool_choice"] = {"type": "auto"}
+
+            response = self.client.messages.create(**next_params)
+
+        # Extract text from final response
+        for block in response.content:
+            if hasattr(block, "text"):
+                return block.text
+
+        return "I wasn't able to generate a response. Please try again."

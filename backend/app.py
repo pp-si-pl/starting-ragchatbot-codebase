@@ -40,10 +40,15 @@ class QueryRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
 
+class Source(BaseModel):
+    """Model for a source citation with optional URL"""
+    name: str
+    url: Optional[str] = None
+
 class QueryResponse(BaseModel):
     """Response model for course queries"""
     answer: str
-    sources: List[str]
+    sources: List[Source]
     session_id: str
 
 class CourseStats(BaseModel):
@@ -64,7 +69,10 @@ async def query_documents(request: QueryRequest):
         
         # Process query using RAG system
         answer, sources = rag_system.query(request.query, session_id)
-        
+
+        import sys
+        print(f"DEBUG sources type: {type(sources)}, first: {sources[0] if sources else 'empty'}", file=sys.stderr)
+
         return QueryResponse(
             answer=answer,
             sources=sources,
